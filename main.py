@@ -3,34 +3,49 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import RedirectResponse
 import requests
 
-app = FastAPI(title="Bunkr Fast Resolver")
+app = FastAPI(title="Bunkr Direct Resolver")
 
+# ใช้ Header ของ Browser เต็มรูปแบบพร้อมรองรับการถอดรหัส Gzip/Brotli
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-        " like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        " like Gecko) Chrome/128.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://bunkr.ws/",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
 @app.get("/bunkr")
 def get_bunkr_stream(url: str = Query(..., description="URL Bunkr")):
     try:
-        # จำกัด Timeout เพียง 5 วินาที เพื่อไม่ให้ Render ค้างจนเกิด Error 522
-        res = requests.get(url, headers=HEADERS, timeout=5)
+        session = requests.Session()
+
+        # เปลี่ยนโดเมน .ws / .ru ให้เป็นโดเมนหลักปัจจุบันเพื่อหลบ Timeout
+        target_url = url.replace("bunkr.ws", "bunkr.black").replace(
+            "bunkr.ru", "bunkr.black"
+        )
+
+        res = session.get(target_url, headers=HEADERS, timeout=8)
         res.raise_for_status()
         html = res.text
 
-        # ค้นหา Direct URL วิดีโอ (.mp4, .m3u8, .ts) แบบรวดเร็วด้วย Regex
+        # 1. ค้นหา Media Link โดยตรง (.mp4, .m3u8, .ts, .mkv)
         match = re.search(
             r'https?://[^\s"\'<>]+\.(?:mp4|m3u8|ts|mkv)[^\s"\'<>]*',
             html,
             re.IGNORECASE,
         )
 
+        # 2. ค้นหา CDN Server (media-files / cdn)
         if not match:
-            # สำรอง ค้นหาโดเมนตระกูล cdn หรือ media-files ของ bunkr
             match = re.search(
                 r'https?://(?:media-files|[^\s"\'<>]+\.bunkr)[^\s"\'<>]+',
                 html,
@@ -48,7 +63,7 @@ def get_bunkr_stream(url: str = Query(..., description="URL Bunkr")):
     except requests.exceptions.Timeout:
         raise HTTPException(
             status_code=504,
-            detail="Bunkr ตอบสนองช้าเกินไป กรุณากดลองใหม่อีกครั้ง",
+            detail="Bunkr Cloudflare Blocked - Timeout Connection",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
